@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <pthread.h>
+#include <unistd.h>
 #include <time.h>
 
 #define DETECTIVES_N 10
@@ -26,6 +27,7 @@ int detectives = 0;
 int clients = 0;
 int interviewed = 0;
 int crimes = 0;
+int stopIssued = 0;
 
 void * detective(void *arg)
 {
@@ -44,6 +46,11 @@ void * detective(void *arg)
         {
             pthread_cond_wait(&crime, &mutex);
         }
+	if(stopIssued)
+	{
+		pthread_mutex_unlock(&mutex);
+		break;
+	}
         crimes--;
         detectives--;
 
@@ -60,6 +67,7 @@ void * detective(void *arg)
         pthread_mutex_unlock(&mutex);
         sleep(2 + rand() % 4);
     }
+    printf("[DETETIVE] O detetive #%d volta para o departamento.\n", data->tid);
 
 }
 
@@ -74,25 +82,35 @@ void * client(void *arg)
         pthread_mutex_lock(&mutex);
 
         if(lockdown == 1)
-        {
-            crimes++;
+        { 
+	    crimes++;
             pthread_mutex_unlock(&mutex);
             pthread_barrier_wait(&lockdown_barrier);
             pthread_mutex_lock(&mutex);
             printf("[CLIENTE] O cliente #%d foi enviado para inquérito por conta do lockdown.\n", data->tid);
             pthread_cond_signal(&crime);
-            clients--;
+	    clients--;
             while(interviewed == 0)
             {
                 pthread_cond_wait(&interview, &mutex);
             }
             printf("[CLIENTE] O cliente #%d foi para casa após ser interrogado.\n", data->tid);
-            clients++;
             interviewed--;
-            pthread_mutex_unlock(&mutex);
-            pthread_barrier_wait(&lockdown_barrier_after);
-            printf("[CLIENTE] Todos foram para casa.\n", data->tid);
-            exit(1);
+	    pthread_mutex_unlock(&mutex);
+	    pthread_barrier_wait(&lockdown_barrier_after);
+	    pthread_mutex_lock(&mutex);
+	    if(stopIssued == 0)
+	    {
+                stopIssued = 1;
+     	        printf("[CLIENTE] Todos foram para casa.\n", data->tid);
+            }
+	    if(stopIssued)
+	    {
+		crimes = CLIENTS_N;
+		pthread_cond_broadcast(&crime);
+            }
+	    pthread_mutex_unlock(&mutex);
+	    break;
         }
 
         probability = rand() % 100;
@@ -152,7 +170,6 @@ void * client(void *arg)
         pthread_mutex_unlock(&mutex);
         sleep(2 + rand() % 3);
     }
-
 }
 
 
@@ -175,7 +192,7 @@ int main()
         sleep(1);
     }
 
-    for(i = 0; i < CLIENTS_N; ++i)
+    for(i = DETECTIVES_N; i < CLIENTS_N+DETECTIVES_N; ++i)
     {
         pthread_create(&thr[i], NULL, &client, &thr_data[i]);
         thr_data[i].tid = clients_counter;
@@ -187,6 +204,8 @@ int main()
     {
         pthread_join(thr[i], NULL);
     }
+
+    pthread_exit(NULL);
 
     return 1;
 }
